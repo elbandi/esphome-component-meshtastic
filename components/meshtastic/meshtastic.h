@@ -146,6 +146,8 @@ class Meshtastic : public Component
   void send_text(const std::string &text, uint32_t dest, const std::string &channel, bool want_ack);
   void send_detection(const std::string &text, const std::string &channel, bool want_ack);
 
+  // Store our own position WITHOUT transmitting it; only used to answer position requests addressed to us.
+  void set_static_position(double latitude, double longitude, int32_t altitude, uint32_t precision_bits);
   void send_position(double latitude, double longitude, int32_t altitude, uint32_t precision_bits,
                      const std::string &channel, bool want_ack);
   void send_device_metrics(const meshtastic_DeviceMetrics &metrics, const std::string &channel, bool want_ack);
