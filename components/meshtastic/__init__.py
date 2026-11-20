@@ -21,6 +21,7 @@ CONF_SHORT_NAME = "short_name"
 CONF_NODE_NUM = "node_num"
 CONF_PRIVATE_KEY = "private_key"
 CONF_KNOWN_NODES = "known_nodes"
+CONF_POSITION = "position"
 CONF_PUBLIC_KEY = "public_key"
 CONF_CHANNELS = "channels"
 CONF_PSK = "psk"
@@ -228,6 +229,7 @@ KeyVerificationTrigger = meshtastic_ns.class_(
 SendTextAction = meshtastic_ns.class_("SendTextAction", automation.Action)
 SendDetectionAction = meshtastic_ns.class_("SendDetectionAction", automation.Action)
 SendPositionAction = meshtastic_ns.class_("SendPositionAction", automation.Action)
+SetPositionAction = meshtastic_ns.class_("SetPositionAction", automation.Action)
 SendTelemetryAction = meshtastic_ns.class_("SendTelemetryAction", automation.Action)
 SendEnvironmentMetricsAction = meshtastic_ns.class_("SendEnvironmentMetricsAction", automation.Action)
 SendNodeInfoAction = meshtastic_ns.class_("SendNodeInfoAction", automation.Action)
@@ -312,6 +314,31 @@ async def send_position_to_code(config, action_id, template_arg, args):
     cg.add(var.set_altitude(await cg.templatable(config[CONF_ALTITUDE], args, cg.int32)))
     cg.add(var.set_precision_bits(await cg.templatable(config[CONF_PRECISION_BITS], args, cg.uint32)))
     await _add_channel_want_ack(var, config, args)
+    return var
+
+
+# meshtastic.set_position: update our stored position WITHOUT transmitting (no channel/want_ack). It is only
+# returned as a direct reply to position requests addressed to us (see the `position:` option).
+@automation.register_action(
+    "meshtastic.set_position",
+    SetPositionAction,
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.use_id(Meshtastic),
+            cv.Required(CONF_LATITUDE): cv.templatable(cv.float_range(min=-90, max=90)),
+            cv.Required(CONF_LONGITUDE): cv.templatable(cv.float_range(min=-180, max=180)),
+            cv.Optional(CONF_ALTITUDE, default=0): cv.templatable(cv.int_),
+            cv.Optional(CONF_PRECISION_BITS, default=32): cv.templatable(cv.int_range(min=0, max=32)),
+        }
+    ),
+    synchronous=True,
+)
+async def set_position_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg, await cg.get_variable(config[CONF_ID]))
+    cg.add(var.set_latitude(await cg.templatable(config[CONF_LATITUDE], args, cg.double)))
+    cg.add(var.set_longitude(await cg.templatable(config[CONF_LONGITUDE], args, cg.double)))
+    cg.add(var.set_altitude(await cg.templatable(config[CONF_ALTITUDE], args, cg.int32)))
+    cg.add(var.set_precision_bits(await cg.templatable(config[CONF_PRECISION_BITS], args, cg.uint32)))
     return var
 
 
@@ -508,6 +535,18 @@ KNOWN_NODE_SCHEMA = cv.Schema(
 )
 
 
+# Static own position: stored only (no transmission). Used to answer position requests addressed to us
+# (POSITION_APP want_response) with a direct reply to the requester.
+STATIC_POSITION_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_LATITUDE): cv.float_range(min=-90, max=90),
+        cv.Required(CONF_LONGITUDE): cv.float_range(min=-180, max=180),
+        cv.Optional(CONF_ALTITUDE, default=0): cv.int_,
+        cv.Optional(CONF_PRECISION_BITS, default=32): cv.int_range(min=0, max=32),
+    }
+)
+
+
 def validate_known_nodes(value):
     value = cv.ensure_list(KNOWN_NODE_SCHEMA)(value)
     seen = set()
@@ -652,6 +691,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_REMOTE_HARDWARE): REMOTE_HARDWARE_SCHEMA,
         cv.Optional(CONF_CHANNELS): cv.ensure_list(CHANNEL_SCHEMA),
         cv.Optional(CONF_KNOWN_NODES): validate_known_nodes,
+        cv.Optional(CONF_POSITION): STATIC_POSITION_SCHEMA,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -715,6 +755,13 @@ async def to_code(config):
 
     for ch in config.get(CONF_CHANNELS, []):
         cg.add(var.add_channel(ch[CONF_NAME], ch[CONF_PSK], ch[CONF_UPLINK], ch[CONF_DOWNLINK]))
+
+    if pos := config.get(CONF_POSITION):
+        cg.add(
+            var.set_static_position(
+                pos[CONF_LATITUDE], pos[CONF_LONGITUDE], pos[CONF_ALTITUDE], pos[CONF_PRECISION_BITS]
+            )
+        )
 
     for kn in config.get(CONF_KNOWN_NODES, []):
         cg.add(

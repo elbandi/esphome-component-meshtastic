@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -162,6 +163,30 @@ template<typename... Ts> class SendPositionAction : public Action<Ts...> {
     this->parent_->send_position(this->latitude_.value(x...), this->longitude_.value(x...), this->altitude_.value(x...),
                                  this->precision_bits_.value(x...), this->channel_.value(x...),
                                  this->want_ack_.value(x...));
+  }
+
+ protected:
+  Meshtastic *parent_;
+};
+
+// meshtastic.set_position: store our position without transmitting; answered only on direct requests.
+template<typename... Ts> class SetPositionAction : public Action<Ts...> {
+ public:
+  explicit SetPositionAction(Meshtastic *parent) : parent_(parent) {}
+  TEMPLATABLE_VALUE(double, latitude)
+  TEMPLATABLE_VALUE(double, longitude)
+  TEMPLATABLE_VALUE(int32_t, altitude)
+  TEMPLATABLE_VALUE(uint32_t, precision_bits)
+
+  void play(const Ts &...x) override {
+    const double lat = this->latitude_.value(x...);
+    const double lon = this->longitude_.value(x...);
+    if (std::isnan(lat) || std::isnan(lon)) {
+      ESP_LOGW("meshtastic", "set_position: latitude/longitude is NaN, ignored");
+      return;
+    }
+    this->parent_->set_static_position(lat, lon, this->altitude_.value(x...), this->precision_bits_.value(x...));
+    ESP_LOGD("meshtastic", "Position set (not transmitted): %.7f, %.7f", lat, lon);
   }
 
  protected:

@@ -7,6 +7,7 @@
 #include "mesh.pb.h"
 #include "remote_hardware.pb.h"
 #include <pb_decode.h>
+#include <ctime>
 #include <pb_encode.h>
 #include <cmath>
 #include <cstdio>
@@ -301,6 +302,10 @@ void Meshtastic::dump_config() {
     ESP_LOGCONFIG(TAG, "  Known node !%08x \"%s\" (%s) key=%02x%02x%02x%02x...", (unsigned) kn.num, kn.long_name.c_str(),
                   kn.short_name.c_str(), kn.public_key[0], kn.public_key[1], kn.public_key[2], kn.public_key[3]);
   }
+  if (this->has_self_position_)
+    ESP_LOGCONFIG(TAG, "  Position (answer requests only): %.7f, %.7f alt=%dm prec=%ubits",
+                  this->self_position_.latitude_i * 1e-7, this->self_position_.longitude_i * 1e-7,
+                  (int) this->self_position_.altitude, (unsigned) this->self_position_.precision_bits);
   ESP_LOGCONFIG(TAG, "  PKC (direct messages): %s",
                 this->has_keypair_
                     ? (this->private_key_configured_ ? "ready (configured key)" : "ready (generated key)")
@@ -441,9 +446,13 @@ void Meshtastic::dispatch_decoded_(const meshtastic_Data &data, const PacketHead
         if (ridx < 0)
           ridx = 0;
         if (this->has_self_position_) {
+          meshtastic_Position reply = this->self_position_;
+          const time_t now = ::time(nullptr);
+          if (now > 1700000000)  // only with a synced clock
+            reply.time = (uint32_t) now;
           uint8_t rbuf[meshtastic_Position_size];
           pb_ostream_t ros = pb_ostream_from_buffer(rbuf, sizeof(rbuf));
-          if (pb_encode(&ros, meshtastic_Position_fields, &this->self_position_)) {
+          if (pb_encode(&ros, meshtastic_Position_fields, &reply)) {
             ESP_LOGD(TAG, "  position requested by !%08x; replying", h.from);
             this->send_data_(meshtastic_PortNum_POSITION_APP, rbuf, ros.bytes_written, h.from, ridx, false, h.id);
           }
@@ -1381,6 +1390,27 @@ void Meshtastic::expire_pending_dms_() {
       i++;
     }
   }
+}
+
+void Meshtastic::set_static_position(double latitude, double longitude, int32_t altitude, uint32_t precision_bits) {
+  meshtastic_Position pos = meshtastic_Position_init_zero;
+  int32_t lat_i = (int32_t) lround(latitude * 1e7);
+  int32_t lon_i = (int32_t) lround(longitude * 1e7);
+  if (precision_bits > 0 && precision_bits < 32) {
+    const uint32_t mask = 0xFFFFFFFFu << (32 - precision_bits);
+    lat_i = (int32_t) ((uint32_t) lat_i & mask);
+    lon_i = (int32_t) ((uint32_t) lon_i & mask);
+  }
+  pos.has_latitude_i = true;
+  pos.latitude_i = lat_i;
+  pos.has_longitude_i = true;
+  pos.longitude_i = lon_i;
+  pos.has_altitude = true;
+  pos.altitude = altitude;
+  pos.precision_bits = precision_bits;
+  pos.location_source = meshtastic_Position_LocSource_LOC_MANUAL;
+  this->self_position_ = pos;
+  this->has_self_position_ = true;
 }
 
 void Meshtastic::send_position(double latitude, double longitude, int32_t altitude, uint32_t precision_bits,
